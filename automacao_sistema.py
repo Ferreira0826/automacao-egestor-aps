@@ -9,176 +9,171 @@ from dotenv import load_dotenv
 # ==========================================
 # 0. CARREGAMENTO BLINDADO DE CREDENCIAIS
 # ==========================================
-# Descobre exatamente onde este script está salvo e força a leitura do .env na mesma pasta
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, '.env')
 load_dotenv(ENV_PATH)
 
 # ==========================================
-# 1. CONFIGURAÇÕES DINÂMICAS (Atualize mensalmente aqui)
+# 1. CONFIGURAÇÕES FIXAS DO SISTEMA
 # ==========================================
-PARCELA_ATUAL = "4/12"
-MES_REFERENCIA = "FEV26" # Usado para o nome do arquivo
-ANO_FILTRO = "2026"
-
-# ==========================================
-# 2. CONFIGURAÇÕES FIXAS DO SISTEMA
-# ==========================================
+ANO_FILTRO = "2026" # Só precisará mudar isso em 2027
 URL_DIRETA = "https://relatorioaps.saude.gov.br/gerenciaaps/pagamento/incentivo-atividade-fisica"
 ID_PLANILHA_SHEETS = os.getenv("ID_PLANILHA_SHEETS")
 PASTA_EGESTOR = os.getenv("PASTA_EGESTOR")
 NOME_ABA_SHEETS = "e-Gestor"
 
-# Gera o nome do arquivo automaticamente (ex: Pago parcela 4de12 FEV26.xlsx)
-NOME_ARQUIVO_FINAL = f"Pago parcela {PARCELA_ATUAL.replace('/', 'de')} {MES_REFERENCIA}.xlsx"
-CAMINHO_COMPLETO = os.path.join(PASTA_EGESTOR, NOME_ARQUIVO_FINAL)
+# ==========================================
+# 2. MOTOR DE INTELIGÊNCIA: DESCOBRIR PRÓXIMA PARCELA
+# ==========================================
+def descobrir_proxima_parcela():
+    print("🧠 A ligar ao Google Sheets para descobrir a última parcela processada...")
+    
+    gc = gspread.oauth(
+        credentials_filename='credentials.json',
+        authorized_user_filename='token.json'
+    )
+    
+    planilha = gc.open_by_key(ID_PLANILHA_SHEETS)
+    aba = planilha.worksheet(NOME_ABA_SHEETS)
+    dados_no_sheets = aba.get_all_values()
+    
+    # Procura de baixo para cima a última parcela válida
+    ultima_parcela = "0/12"
+    for linha in reversed(dados_no_sheets):
+        if len(linha) > 4 and "/" in str(linha[4]):
+            ultima_parcela = str(linha[4]).strip()
+            break
+            
+    print(f"📌 Última parcela na planilha: {ultima_parcela}")
+    
+    # Extrai o número (ex: de "4/12" tira o 4) e soma 1
+    numerador_atual = int(ultima_parcela.split('/')[0])
+    proximo_numerador = numerador_atual + 1
+    
+    if proximo_numerador > 12:
+        print("🎉 Todas as 12 parcelas deste ano já foram integradas! Nada a fazer.")
+        return None, None
+        
+    parcela_alvo = f"{proximo_numerador}/12"
+    print(f"🎯 Alvo automático definido para: {parcela_alvo}")
+    
+    # Cria um nome dinâmico para o arquivo sem precisar saber o mês de cabeça
+    nome_arquivo = f"Relatorio_Parcela_{parcela_alvo.replace('/', 'de')}_{ANO_FILTRO}.xlsx"
+    caminho_completo = os.path.join(PASTA_EGESTOR, nome_arquivo)
+    
+    return parcela_alvo, caminho_completo
 
-def baixar_relatorio_egestor():
-    print(f"Iniciando robô para baixar parcela {PARCELA_ATUAL}...")
+# ==========================================
+# 3. EXTRAÇÃO DE DADOS (PLAYWRIGHT)
+# ==========================================
+def baixar_relatorio_egestor(parcela_alvo, caminho_completo):
+    print(f"A iniciar o robô para descarregar a parcela {parcela_alvo}...")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False) 
         context = browser.new_context(accept_downloads=True)
         page = context.new_page()
         
-        # Acesso à página principal de relatórios
-        print("Acessando página inicial...")
+        print("A aceder à página inicial...")
         page.goto("https://relatorioaps.saude.gov.br/")
         page.wait_for_load_state("networkidle")
         
-        # Clica no card "Financiamento APS" usando o href que você encontrou
-        print("Navegando para Financiamento APS...")
+        print("A navegar para Financiamento APS...")
         page.click("a[href='/gerenciaaps/pagamento']")
         page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(2000) # Aguarda um pouco para a tela de filtros montar
+        page.wait_for_timeout(2000) 
         
-        # ==========================================
-        # PREENCHIMENTO DOS FILTROS
-        # ==========================================
-        print("Preenchendo filtros...")
-        
-        # 1. Filtro Tipo de Unidade
+        print("A preencher filtros...")
         page.click("span#tipo-unidade") 
         page.wait_for_timeout(1000)
         page.click("li:has-text('Município')")
-        
-        # ESPERA CRÍTICA: Aguarda 2 segundos para o site "entender" que mudou para Município
-        # e liberar a caixa de Estado sem dar aquele erro de Timeout.
         page.wait_for_timeout(2000) 
         
-        # 2. Filtro de Estado
         page.click("span#estado")
         page.wait_for_timeout(1000)
         page.click("li:has-text('DISTRITO FEDERAL')")
-        
-        # ESPERA VITAL: Dá tempo ao sistema para carregar a lista de cidades a partir da base de dados
         page.wait_for_timeout(3000) 
         
-        # 3. Filtro de Município
         page.click("span#municipio")
         page.wait_for_timeout(1000)
-        # O :visible garante que apenas interage com o texto que já foi renderizado no ecrã
         page.locator("li:has-text('BRASÍLIA'):visible").first.click()
         
-        # Filtro de Ano (Usa a variável lá do topo do código)
         page.click("span#ano")
         page.wait_for_timeout(1000)
         page.click(f"li:has-text('{ANO_FILTRO}')")
         
-        # 5. Filtro de Parcela Início
+        # Clica na parcela gerada automaticamente
         page.click("span#parcela-inicio")
         page.wait_for_timeout(1000)
-        # O :visible garante que ele ignore códigos antigos e clique apenas no que está na tela
-        page.locator(f"li:has-text('{PARCELA_ATUAL}'):visible").first.click()
-        
-        # ESPERA ESTRATÉGICA: Tempo para o site recalcular as opções da caixa "Fim"
+        page.locator(f"li:has-text('{parcela_alvo}'):visible").first.click()
         page.wait_for_timeout(2000) 
         
-        # 6. Filtro de Parcela Fim
         page.click("span#parcela-fim")
         page.wait_for_timeout(1000)
-        page.locator(f"li:has-text('{PARCELA_ATUAL}'):visible").first.click()
+        page.locator(f"li:has-text('{parcela_alvo}'):visible").first.click()
         
-        # ==========================================
-        # EXECUÇÃO E NAVEGAÇÃO
-        # ==========================================
-        print("Executando consulta...")
+        print("A executar consulta...")
         page.click("button[aria-label='Ver em tela']")
         page.wait_for_timeout(3000)
         
-        # 1. Primeiro clique na seta inicial (A seta principal da UF/Município)
-        print("Cobrindo a primeira camada...")
+        print("A cobrir a primeira camada...")
         page.locator("span.pi-chevron-right").first.click()
-        page.wait_for_timeout(2500) # Espera maior para a tabela carregar os filhos
+        page.wait_for_timeout(2500) 
         
-        # 2. TÁTICA DE VARREDURA: Tentar abrir as duas pastas possíveis
-        print("Verificando pastas históricas e atuais...")
-        
-        # Tentativa 1: Pasta antiga
+        print("A verificar pastas históricas e atuais...")
         try:
-            print(" -> Buscando 'Demais programas...'")
             texto_antigo = page.get_by_text("Demais programas, serviços e equipes da Atenção Primária à Saúde", exact=True)
             texto_antigo.wait_for(state="visible", timeout=5000)
             texto_antigo.locator("xpath=ancestor::tr[1]").locator("button").first.click()
-            print("    [SUCESSO] Pasta antiga localizada e aberta.")
             page.wait_for_timeout(1500)
-        except Exception as e:
-            print("    [IGNORADO] Pasta antiga não está na tela.")
+        except Exception:
+            pass
 
-        # Tentativa 2: Pasta nova
         try:
-            print(" -> Buscando 'Promoção à saúde...'")
             texto_novo = page.get_by_text("Incentivo financeiro da APS - Promoção à saúde", exact=True)
             texto_novo.wait_for(state="visible", timeout=5000)
             texto_novo.locator("xpath=ancestor::tr[1]").locator("button").first.click()
-            print("    [SUCESSO] Pasta nova localizada e aberta.")
             page.wait_for_timeout(1500)
-        except Exception as e:
-            print("    [IGNORADO] Pasta nova não está na tela.")
+        except Exception:
+            pass
 
-        # 3. Localizando o botão final de Detalhes
-        print("Abrindo detalhes em nova aba...")
+        print("A abrir detalhes num novo separador...")
         texto_atividade = page.get_by_text("Incentivo de Atividade Física", exact=True)
         
-        # Preparamos o robô para capturar a nova aba que vai abrir
         with context.expect_page() as new_page_info:
             texto_atividade.locator("xpath=ancestor::tr[1]").locator("button:has-text('Ver Detalhes')").click()
         
-        # Agora o robô "pula" para a aba do relatório
         aba_relatorio = new_page_info.value
         aba_relatorio.wait_for_load_state("networkidle")
-        print("Foco alterado para a aba do relatório.")
+        print("Foco alterado para o separador do relatório.")
 
-        # ==========================================
-        # DOWNLOAD (NA ABA CORRETA)
-        # ==========================================
         sucesso_download = False
         try:
-            print("Iniciando extração na aba de detalhes...")
-            # Agora procuramos o botão na 'aba_relatorio' e não na 'page'
+            print("A iniciar extração...")
             botao_dl = aba_relatorio.locator("button[aria-label='Download do excel']").first
             
             with aba_relatorio.expect_download(timeout=60000) as download_info:
                 botao_dl.click(force=True) 
                 
             download = download_info.value
-            download.save_as(CAMINHO_COMPLETO)
-            print(f"✅ Download concluído: {CAMINHO_COMPLETO}")
+            download.save_as(caminho_completo)
+            print(f"✅ Descarga concluída: {caminho_completo}")
             sucesso_download = True
             
         except Exception as e:
-            print(f"❌ Erro ao tentar baixar na nova aba: {e}")
+            print(f"❌ Erro ao tentar descarregar: {e}")
 
         browser.close()
-        return CAMINHO_COMPLETO if sucesso_download else None
-    
-def enviar_para_sheets(caminho_arquivo, nome_aba):
+        return caminho_completo if sucesso_download else None
+
+# ==========================================
+# 4. INTEGRAÇÃO E FORMATAÇÃO (GOOGLE SHEETS)
+# ==========================================
+def enviar_para_sheets(caminho_arquivo, nome_aba, parcela_alvo):
     print(f"A iniciar a integração para a aba: {nome_aba}...")
     
-    # 1. Lê os dados do ficheiro Excel
     df = pd.read_excel(caminho_arquivo)
     
-    # Tratamento das colunas N e O para o e-Gestor
     if nome_aba == "e-Gestor":
         try:
             df = df.drop(df.columns[[13, 14]], axis=1)
@@ -187,14 +182,28 @@ def enviar_para_sheets(caminho_arquivo, nome_aba):
 
     df = df.fillna("")
     
-    # HIGIENIZAÇÃO CRÍTICA: Converte tudo para texto limpo para o Sheets não travar
+    # ----------------------------------------------------
+    # FILTRO DE HIGIENIZAÇÃO E BLOQUEIO DE DATA
+    # ----------------------------------------------------
     valores_para_subir = []
     for linha in df.values.tolist():
-        linha_limpa = [str(celula).strip() for celula in linha]
+        linha_limpa = []
+        for i, celula in enumerate(linha):
+            valor = str(celula).strip()
+            
+            # Se for a coluna E (Índice 4 no Python) e tiver uma barra
+            if i == 4 and "/" in valor:
+                try:
+                    # Separa o numerador do denominador (ex: "5" e "12")
+                    numerador, denominador = valor.split('/')
+                    # Força o zero à esquerda (05) e adiciona a aspa simples (') para bloquear datas
+                    valor = f"'{int(numerador):02d}/{denominador}"
+                except:
+                    pass
+                    
+            linha_limpa.append(valor)
         valores_para_subir.append(linha_limpa)
-
-    # 2. Define o Mês/Ano que o robô está a processar
-    mes_ano_processado = f"fev./{ANO_FILTRO}" 
+    # ----------------------------------------------------
 
     try:
         gc = gspread.oauth(
@@ -205,50 +214,34 @@ def enviar_para_sheets(caminho_arquivo, nome_aba):
         planilha = gc.open_by_key(ID_PLANILHA_SHEETS)
         aba = planilha.worksheet(nome_aba)
         
-        # ==========================================
-        # TRAVA DE SEGURANÇA: VALIDAÇÃO DUPLA (D + E) BLINDADA
-        # ==========================================
-        print("A verificar se este lote (Mês + Parcela) já existe...")
-        
+        print("A verificar segurança contra duplicidade...")
         dados_no_sheets = aba.get_all_values()
         
-        # Limpeza extrema do alvo: minúsculas, sem espaços, tira o ponto e tira o zero à esquerda
-        mes_ano_alvo = mes_ano_processado.strip().lower().replace(".", "")
-        parcela_alvo = str(PARCELA_ATUAL).strip().lower().lstrip("0")
+        # Limpa o alvo para garantir a comparação (tira zeros e aspas)
+        parcela_alvo_limpa = parcela_alvo.strip().lower().replace("'", "").lstrip("0")
         
         ja_existe = False
         for linha in dados_no_sheets:
             if len(linha) > 4:
-                # Limpeza extrema dos dados da folha (idêntico ao alvo)
-                coluna_mes = str(linha[3]).strip().lower().replace(".", "")
-                coluna_parcela = str(linha[4]).strip().lower().lstrip("0")
-                
-                # Comparação justa e imune a formatações visuais
-                if coluna_mes == mes_ano_alvo and coluna_parcela == parcela_alvo:
+                # Limpa a linha da folha para comparar de forma justa
+                coluna_parcela = str(linha[4]).strip().lower().replace("'", "").lstrip("0")
+                if coluna_parcela == parcela_alvo_limpa:
                     ja_existe = True
                     break
         
         if ja_existe:
-            print(f"⚠️ O lote de {mes_ano_processado} com a parcela {PARCELA_ATUAL} já foi encontrado.")
-            print("Envio abortado para evitar duplicidade de dados históricos.")
+            print(f"⚠️ A parcela {parcela_alvo} já foi encontrada no histórico.")
+            print("Envio abortado para evitar duplicidade.")
         else:
-            print(f"Lote novo detetado ({mes_ano_processado} - {PARCELA_ATUAL}).")
-            print("A adicionar informações ao final da tabela...")
+            print(f"A adicionar as informações da parcela {parcela_alvo} ao final da tabela...")
             
-            # O USER_ENTERED diz ao Sheets para interpretar a data com as suas próprias regras
-            aba.append_rows(valores_para_subir, value_input_mode="USER_ENTERED")
+            # Usa o USER_ENTERED. Como injetámos a aspa ('), o Sheets não vai converter a parcela!
+            aba.append_rows(valores_para_subir, value_input_option="USER_ENTERED")
             print("✅ Sucesso! Dados integrados.")
             
-            # ==========================================
-            # FORMATAÇÃO AUTOMÁTICA: CALIBRI 10
-            # ==========================================
             print("A aplicar formatação Calibri 10 na folha...")
-            
-            # Pega no número total de colunas para saber até onde formatar
             total_colunas = len(df.columns)
             letra_final = gspread.utils.rowcol_to_a1(1, total_colunas).replace("1", "")
-            
-            # Exemplo: Se for da coluna A até à O, formata de A:O
             intervalo_formatacao = f"A:{letra_final}"
             
             aba.format(intervalo_formatacao, {
@@ -258,20 +251,27 @@ def enviar_para_sheets(caminho_arquivo, nome_aba):
                 }
             })
             print("✅ Formatação visual aplicada com sucesso.")
-            # ==========================================
             
     except Exception as e:
         print(f"Erro na autenticação ou envio: {e}")
 
+# ==========================================
+# 5. ORQUESTRAÇÃO FINAL
+# ==========================================
 if __name__ == "__main__":
     try:
-        arquivo_egestor = baixar_relatorio_egestor() 
+        # Passo 1: O cérebro descobre o que fazer
+        parcela_alvo, caminho_completo = descobrir_proxima_parcela()
         
-        # O robô só tenta abrir o Google Sheets se a variável tiver o arquivo (não for None)
-        if arquivo_egestor:
-            enviar_para_sheets(arquivo_egestor, "e-Gestor")
-        else:
-            print("⚠️ Envio para o Google Sheets cancelado porque o download falhou.")
+        if parcela_alvo:
+            # Passo 2: O braço vai lá e baixa
+            arquivo_egestor = baixar_relatorio_egestor(parcela_alvo, caminho_completo) 
             
+            # Passo 3: O sistema consolida
+            if arquivo_egestor:
+                enviar_para_sheets(arquivo_egestor, "e-Gestor", parcela_alvo)
+            else:
+                print("⚠️ Envio para o Google Sheets cancelado porque a descarga falhou.")
+                
     except Exception as e:
         print(f"Erro na execução geral: {e}")
