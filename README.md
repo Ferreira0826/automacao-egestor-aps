@@ -1,30 +1,173 @@
-# Pipeline de Automação RPA: Extração de Dados e Integração Contínua com Google Sheets
+# Robô SISAB — Pipeline de Automação RPA
 
-## 📋 Descrição do Projeto
-Este projeto consiste no desenvolvimento de uma solução robusta de **RPA (Robotic Process Automation)** e **Integração de Dados** utilizando Python. O objetivo principal é automatizar o fluxo completo de recolha, tratamento e consolidação de relatórios de financiamento público de saúde a partir do portal governamental e-Gestor APS, inserindo-os diretamente num dashboard operacional no Google Sheets.
+> **e-Gestor → Google Sheets → Planilha Local → eCIEGES**
 
-A solução foi desenhada para eliminar processos manuais repetitivos, mitigar falhas humanas de digitação e garantir a integridade histórica dos dados através de travas de segurança antiduplicidade.
+Solução de **RPA (Robotic Process Automation)** em Python que automatiza o ciclo completo de coleta, consolidação e distribuição de dados de financiamento público de saúde. Parte do **portal e-Gestor APS** (governo federal), passa por **Google Sheets**, atualiza a **planilha consolidada no servidor** e faz upload no sistema interno **eCIEGES**.
+
+---
+
+## 🔄 Fluxo Completo do Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Portal e-Gestor APS                                         │
+│     Robô faz login, aplica filtros (DF/Brasília/Ano/Parcela)    │
+│     e baixa o XLSX da parcela mais recente                      │
+└────────────────────────────────┬────────────────────────────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  2. Salva XLSX bruto no servidor                                │
+│     \\------\---\-----\{ANO}\IAF\...                           │
+└────────────────────────────────┬────────────────────────────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  3. Google Sheets (histórico consolidado)                       │
+│     Verifica antiduplicidade e adiciona linhas da nova parcela  │
+└────────────────────────────────┬────────────────────────────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  4. Planilha local consolidada                                  │
+│     Baixa todos os dados do Sheets e substitui APENAS a aba     │
+│     'e-Gestor' do arquivo:                                      │
+│     \\----FS\----\-----\2024\PAINÉIS\IAF\...                    │
+│     (preserva abas: sisab, egestor_desat, sisab_bkp)            │
+└────────────────────────────────┬────────────────────────────────┘
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  5. eCIEGES (sistema interno - form 472)                        │
+│     Login automatizado → botão 'Importar Arquivo' →             │
+│     upload da planilha local atualizada                         │
+└────────────────────────────────┬────────────────────────────────┘
+                                 ▼
+                          ✉️ E-mail de status
+                       (sucesso / erro / indisponível)
+```
+
+---
 
 ## 🚀 Funcionalidades Principais
-* **Web Scraping Avançado:** Navegação e preenchimento dinâmico de filtros multinível (Tipo de Unidade, UF, Município e Período) simulando o comportamento humano via Playwright.
-* **Resiliência a Instabilidades:** Implementação de estratégias de esperas explícitas e inteligência de varredura para lidar com a lentidão nativa e alterações estruturais do portal do governo.
-* **Pipeline de Dados Limpo:** Utilização da biblioteca Pandas para isolar, higienizar e converter os dados brutos de ficheiros Excel (.xlsx) antes da exportação.
-* **Validação Dupla Antiduplicidade:** Algoritmo rigoroso que higieniza strings (remoção de espaços invisíveis e normalização de maiúsculas/minúsculas) e valida de forma combinada o mês de referência e a parcela atual, impedindo a sobreposição de dados históricos.
-* **Formatação Visual Automatizada:** Comunicação direta com a API do Google Sheets para forçar a padronização tipográfica das tabelas (Fonte Calibri, Tamanho 10) sem corromper as máscaras de dados e propriedades nativas de células de data.
-* **Segurança e Boas Práticas:** Arquitetura protegida contra a exposição de caminhos de rede locais ou chaves privadas através do isolamento de variáveis de ambiente (`.env`).
 
-## 🛠️ Tecnologias e Ferramentas Utilizadas
-* **Linguagem Principal:** Python 3.10+
-* **Automação Web (RPA):** Playwright
-* **Manipulação e Análise de Dados:** Pandas / Openpyxl
-* **Integração com Cloud API:** Gspread / Google OAuth2 (Google Cloud Console)
-* **Gestão de Variáveis de Ambiente:** Python-dotenv
-* **Orquestração:** Agendador de Tarefas do Windows (Execução em Background via `.bat`)
+- **Descoberta automática da próxima parcela** — lê o Sheets, identifica a última parcela processada e busca a próxima (ex: se a última é `05/12`, busca `6/12` no site)
+- **Compatibilidade de formato** — busca no site com formato natural (`6/12`) e grava no Sheets com zero à esquerda (`06/12`)
+- **Detecção de parcela indisponível** — se o governo ainda não publicou, o robô encerra limpo e envia e-mail informativo
+- **Antiduplicidade** — normalização de strings (zeros, aspas, espaços) impede gravação de parcelas repetidas
+- **Proteção contra conversão automática de data** — injeta aspa simples nas parcelas para o Sheets não confundir `06/12` com data
+- **Sincronização Sheets → planilha local** — substitui apenas a aba `e-Gestor` da planilha consolidada, sem afetar outras abas
+- **Upload automático no eCIEGES** — login via Material UI, navegação até o formulário 472, importação do XLSX
+- **Logging em arquivo** — `logs/robo_sisab.log` registra cada etapa com timestamp
+- **Notificação por e-mail (Gmail API)** — envia avisos via HTTPS porta 443, contornando bloqueios de SMTP institucional
+- **Execução em background** — `headless=True` permite rodar no Agendador de Tarefas sem interface visível
+- **Ano dinâmico** — `datetime.now().year` evita edições manuais a cada virada de ano
+
+---
+
+## 🛠️ Tecnologias Utilizadas
+
+| Biblioteca | Finalidade |
+|---|---|
+| `playwright` | Automação dos navegadores (e-Gestor e eCIEGES) |
+| `gspread` | Integração com Google Sheets API |
+| `pandas` / `openpyxl` | Leitura e tratamento de dados XLSX |
+| `google-api-python-client` | Envio de e-mails via Gmail API |
+| `python-dotenv` | Gestão de variáveis de ambiente |
+| `logging` | Registro de eventos em arquivo |
+
+---
 
 ## 📁 Estrutura do Repositório
-```text
-├── automacao_sistema.py    # Script principal da automação RPA e pipeline
-├── .env.example            # Modelo de configuração das variáveis de ambiente
-├── .gitignore              # Proteção de credenciais e ficheiros locais
-├── README.md               # Documentação técnica do projeto
-└── executar_robo.bat       # Ficheiro de lote para orquestração local
+
+```
+Robo_SISAB/
+├── automacao_sistema.py    # Script principal com todo o pipeline
+├── .env.example            # Modelo das variáveis (copiar para .env)
+├── .gitignore              # Proteção de credenciais e arquivos locais
+├── requirements.txt        # Dependências do projeto
+├── rodar_robo.bat          # Atalho para Agendador de Tarefas Windows
+└── README.md               # Esta documentação
+```
+
+> **Não estão no repositório** (bloqueados pelo `.gitignore`): `.env`, `credentials.json`, `token.json`, pasta `logs/`, arquivos `.xlsx` baixados.
+
+---
+
+## ⚙️ Configuração Inicial
+
+### 1. Instalar dependências
+
+```powershell
+python -m pip install -r requirements.txt
+playwright install chromium
+```
+
+### 2. Configurar credenciais Google
+
+Coloque `credentials.json` (OAuth Desktop) na raiz do projeto. Na primeira execução o navegador abrirá para autorização — autorize com a conta que tem acesso ao Google Sheets e ao Gmail. O `token.json` será gerado automaticamente.
+
+> **Escopos necessários no Google Cloud:** Google Sheets API + Gmail API. Habilite ambas em `console.cloud.google.com`.
+
+### 3. Configurar variáveis de ambiente
+
+Copie `.env.example` para `.env` e preencha:
+
+```env
+# Google Sheets
+ID_PLANILHA_SHEETS=seu_id_da_planilha
+
+# Pasta dos relatórios brutos baixados do e-Gestor (ano dinâmico)
+PASTA_EGESTOR=\\------\---\-----\{ANO}\IAF\... - Relatórios e-Gestor - pago
+
+# Planilha local consolidada que alimenta o eCIEGES (caminho fixo)
+PLANILHA_LOCAL=\\----FS\----\-----\2024\PAINÉIS\---\.xlsx
+
+# eCIEGES
+ECIEGES_USUARIO=seu_usuario_ecieges
+ECIEGES_SENHA=sua_senha_ecieges
+
+# E-mail (Gmail API — sem senha, usa o mesmo credentials.json)
+EMAIL_DESTINATARIO=destinatario@gmail.com
+```
+
+---
+
+## ▶️ Execução
+
+**Manual:**
+```powershell
+python automacao_sistema.py
+```
+
+**Automatizada (Agendador de Tarefas do Windows):**
+- Configure uma tarefa apontando para `rodar_robo.bat`
+- Sugestão: agendar para rodar diariamente em horário fixo (ex: 8h da manhã)
+- Quando a parcela do mês ainda não estiver disponível, o robô encerra sozinho e envia e-mail informativo
+
+---
+
+## 📨 Notificações por E-mail
+
+O robô envia e-mails em três situações:
+
+| Situação | Cor do e-mail | Ícone |
+|---|---|---|
+| ✅ Execução completa com sucesso | Verde | ✅ |
+| ⚠️ Parcela ainda não disponível no site | Amarelo | ⚠️ |
+| ❌ Erro em qualquer etapa | Vermelho | ❌ |
+
+O envio é feito via **Gmail API (HTTPS porta 443)**, usando o mesmo `credentials.json` do Google Sheets — não precisa de senha SMTP, App Password nem libera firewall.
+
+---
+
+## 🔒 Segurança
+
+- Credenciais nunca são commitadas — todas em `.env` (bloqueado pelo `.gitignore`)
+- `credentials.json` e `token.json` também ficam fora do git
+- Logs gravados em `logs/` (também ignorados)
+- Se credenciais foram expostas antes, **revogue imediatamente** no Google Cloud Console e gere novas
+
+---
+
+## 📊 Frequência Recomendada
+
+- **Agendamento:** diário, em horário comercial
+- **Comportamento:** se a parcela do mês já foi processada ou ainda não saiu, o robô encerra sem fazer nada e avisa por e-mail
+- **Carga real:** 1x por mês (apenas quando o governo publica nova parcela)
