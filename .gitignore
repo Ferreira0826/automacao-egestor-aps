@@ -1,13 +1,19 @@
-# Bloquear credenciais locais e tokens (qualquer arquivo JSON)
+# ============================================================
+# CREDENCIAIS E SEGREDOS — NUNCA subir para o repositório
+# ============================================================
 .env
-*.json
+credentials.json
+token.json
 
-# Bloquear ficheiros descarregados e caches do Python
+# ============================================================
+# ARQUIVOS BAIXADOS E CACHES
+# ============================================================
 __pycache__/
 *.xlsx
 *.pyc
+logs/
 
-# Ambientes Virtuais (Se você usar no futuro)
+# Ambientes virtuais
 venv/
 .venv/
 env/
@@ -15,6 +21,6 @@ env/
 # Configurações locais do VS Code
 .vscode/
 
-# Ficheiros temporários do Windows/Mac
+# Temporários do Windows/Mac
 Thumbs.db
 .DS_Store
