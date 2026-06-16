@@ -1,4 +1,4 @@
-# Robô SISAB — Pipeline de Automação RPA
+# Robô e-Gestor — Pipeline de Automação RPA
 
 > **e-Gestor → Google Sheets → Planilha Local → eCIEGES**
 
@@ -17,7 +17,7 @@ Solução de **RPA (Robotic Process Automation)** em Python que automatiza o cic
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  2. Salva XLSX bruto no servidor                                │
-│     \\------\---\-----\{ANO}\IAF\...                           │
+│     \\------\----\-----\{ANO}\IAF\...                           │
 └────────────────────────────────┬────────────────────────────────┘
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -29,7 +29,7 @@ Solução de **RPA (Robotic Process Automation)** em Python que automatiza o cic
 │  4. Planilha local consolidada                                  │
 │     Baixa todos os dados do Sheets e substitui APENAS a aba     │
 │     'e-Gestor' do arquivo:                                      │
-│     \\----FS\----\-----\2024\PAINÉIS\IAF\...                    │
+│     \\------\----\-----\2024\PAINÉIS\---\...                    │
 │     (preserva abas: sisab, egestor_desat, sisab_bkp)            │
 └────────────────────────────────┬────────────────────────────────┘
                                  ▼
@@ -54,7 +54,7 @@ Solução de **RPA (Robotic Process Automation)** em Python que automatiza o cic
 - **Proteção contra conversão automática de data** — injeta aspa simples nas parcelas para o Sheets não confundir `06/12` com data
 - **Sincronização Sheets → planilha local** — substitui apenas a aba `e-Gestor` da planilha consolidada, sem afetar outras abas
 - **Upload automático no eCIEGES** — login via Material UI, navegação até o formulário 472, importação do XLSX
-- **Logging em arquivo** — `logs/robo_sisab.log` registra cada etapa com timestamp
+- **Logging em arquivo** — `logs/robo_egestor.log` registra cada etapa com timestamp
 - **Notificação por e-mail (Gmail API)** — envia avisos via HTTPS porta 443, contornando bloqueios de SMTP institucional
 - **Execução em background** — `headless=True` permite rodar no Agendador de Tarefas sem interface visível
 - **Ano dinâmico** — `datetime.now().year` evita edições manuais a cada virada de ano
@@ -77,7 +77,7 @@ Solução de **RPA (Robotic Process Automation)** em Python que automatiza o cic
 ## 📁 Estrutura do Repositório
 
 ```
-Robo_SISAB/
+Robo_eGestor/
 ├── automacao_sistema.py    # Script principal com todo o pipeline
 ├── .env.example            # Modelo das variáveis (copiar para .env)
 ├── .gitignore              # Proteção de credenciais e arquivos locais
@@ -114,10 +114,10 @@ Copie `.env.example` para `.env` e preencha:
 ID_PLANILHA_SHEETS=seu_id_da_planilha
 
 # Pasta dos relatórios brutos baixados do e-Gestor (ano dinâmico)
-PASTA_EGESTOR=\\------\---\-----\{ANO}\IAF\... - Relatórios e-Gestor - pago
+PASTA_EGESTOR=\\-------\----\-----\{ANO}\IAF\{ANO} - Relatórios e-Gestor - pago
 
 # Planilha local consolidada que alimenta o eCIEGES (caminho fixo)
-PLANILHA_LOCAL=\\----FS\----\-----\2024\PAINÉIS\---\.xlsx
+PLANILHA_LOCAL=\\------\---\-----\2024\PAINÉIS\----\----------------.xlsx
 
 # eCIEGES
 ECIEGES_USUARIO=seu_usuario_ecieges

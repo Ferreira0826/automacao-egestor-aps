@@ -25,7 +25,7 @@ load_dotenv(ENV_PATH)
 # ==========================================
 # 0.1 CONFIGURAÇÃO DE LOGGING EM ARQUIVO
 # ==========================================
-LOG_PATH = os.path.join(BASE_DIR, 'logs', 'robo_sisab.log')
+LOG_PATH = os.path.join(BASE_DIR, 'logs', 'robo_egestor.log')
 os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
 
 logging.basicConfig(
@@ -136,7 +136,7 @@ def _corpo_base(titulo, cor_titulo, icone, linhas_corpo):
     <div style="font-family:Calibri,Arial,sans-serif;max-width:600px;margin:0 auto;
                 border:1px solid #ddd;border-radius:8px;overflow:hidden">
       <div style="background:{cor_titulo};padding:20px 24px">
-        <h2 style="margin:0;color:#fff;font-size:20px">{icone} Robô SISAB — {titulo}</h2>
+        <h2 style="margin:0;color:#fff;font-size:20px">{icone} Robô e-Gestor — {titulo}</h2>
       </div>
       <div style="padding:24px;background:#fafafa">
         <ul style="padding-left:20px;color:#333;font-size:14px;line-height:1.6">
@@ -151,7 +151,7 @@ def _corpo_base(titulo, cor_titulo, icone, linhas_corpo):
 
 def notificar_sucesso(parcela):
     enviar_email(
-        assunto=f"✅ [SISAB] Parcela {parcela} integrada com sucesso",
+        assunto=f"✅ [e-Gestor] Parcela {parcela} integrada com sucesso",
         corpo_html=_corpo_base(
             titulo="Execução concluída",
             cor_titulo="#1a7f4b",
@@ -170,7 +170,7 @@ def notificar_sucesso(parcela):
 
 def notificar_parcela_indisponivel(parcela):
     enviar_email(
-        assunto=f"⚠️ [SISAB] Parcela {parcela} ainda não disponível no site",
+        assunto=f"⚠️ [e-Gestor] Parcela {parcela} ainda não disponível no site",
         corpo_html=_corpo_base(
             titulo="Parcela indisponível",
             cor_titulo="#e6a817",
@@ -188,7 +188,7 @@ def notificar_parcela_indisponivel(parcela):
 
 def notificar_erro(etapa, detalhe):
     enviar_email(
-        assunto=f"❌ [SISAB] Erro na etapa: {etapa}",
+        assunto=f"❌ [e-Gestor] Erro na etapa: {etapa}",
         corpo_html=_corpo_base(
             titulo="Erro na execução",
             cor_titulo="#c0392b",
@@ -197,7 +197,7 @@ def notificar_erro(etapa, detalhe):
                 f"<b>Etapa com falha:</b> {etapa}",
                 f"<b>Detalhe:</b> <code style='background:#f5f5f5;padding:2px 6px;"
                 f"border-radius:4px;font-size:13px'>{detalhe}</code>",
-                "Verifique o arquivo <b>logs/robo_sisab.log</b> para o rastreamento completo.",
+                "Verifique o arquivo <b>logs/robo_egestor.log</b> para o rastreamento completo.",
             ]
         )
     )
@@ -686,7 +686,7 @@ def upload_ecieges():
 # ==========================================
 if __name__ == "__main__":
     log.info("=" * 60)
-    log.info(f"ROBÔ SISAB INICIADO — Ano de referência: {ANO_FILTRO}")
+    log.info(f"ROBÔ E-GESTOR INICIADO — Ano de referência: {ANO_FILTRO}")
     log.info("=" * 60)
 
     try:
@@ -737,5 +737,5 @@ if __name__ == "__main__":
         notificar_erro("Execução geral (erro crítico)", str(e))
 
     log.info("=" * 60)
-    log.info("ROBÔ SISAB FINALIZADO")
+    log.info("ROBÔ E-GESTOR FINALIZADO")
     log.info("=" * 60)
