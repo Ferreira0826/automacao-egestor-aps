@@ -12,7 +12,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 from oauth2client.service_account import ServiceAccountCredentials
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
 
 # ==========================================
@@ -55,7 +55,7 @@ EMAIL_DESTINATARIO = os.getenv("EMAIL_DESTINATARIO")
 
 # Planilha local no servidor e eCIEGES
 PLANILHA_LOCAL       = os.getenv("PLANILHA_LOCAL")        # Ex: \\SRV-FS\dics\GEPAP\arquivo.xlsx
-ECIEGES_URL          = "http://ecieges.saude.df.gov.br/data-suite/formularios/visualizar/472"
+ECIEGES_URL          = "http://ecieges.saude.df.gov.br/data-suite/formularios/responder/472"
 ECIEGES_USUARIO      = os.getenv("ECIEGES_USUARIO")
 ECIEGES_SENHA        = os.getenv("ECIEGES_SENHA")
 
@@ -367,6 +367,46 @@ def baixar_relatorio_egestor(parcela_site, parcela_sheets, caminho_completo):
         browser.close()
         return caminho_completo if sucesso_download else None
 
+
+# ==========================================
+# 4.1 WRAPPER COM RETRY PARA TIMEOUTS DO SITE
+# ==========================================
+def baixar_com_retry(parcela_site, parcela_sheets, caminho_completo,
+                     max_tentativas=3, espera_segundos=300):
+    """
+    Encapsula `baixar_relatorio_egestor` com tentativas automáticas
+    em caso de timeout do site do governo (instabilidade temporária).
+
+    - max_tentativas: 3 (configurável)
+    - espera_segundos: 300s = 5 minutos entre tentativas
+    - Só refaz em PlaywrightTimeoutError. Outros erros são propagados.
+    - Parcela indisponível NÃO é timeout, então não dispara retry.
+    """
+    for tentativa in range(1, max_tentativas + 1):
+        try:
+            log.info(f"Tentativa {tentativa}/{max_tentativas} de baixar parcela {parcela_sheets}...")
+            resultado = baixar_relatorio_egestor(parcela_site, parcela_sheets, caminho_completo)
+            return resultado  # Sucesso ou parcela indisponível → encerra sem retry
+
+        except PlaywrightTimeoutError as e:
+            log.warning(f"Timeout na tentativa {tentativa}: {e}")
+
+            if tentativa < max_tentativas:
+                minutos = espera_segundos // 60
+                log.info(f"Aguardando {minutos} minutos antes da próxima tentativa...")
+                time.sleep(espera_segundos)
+            else:
+                log.error(f"Todas as {max_tentativas} tentativas falharam por timeout. Desistindo.")
+                notificar_erro(
+                    "Timeout no site do e-Gestor",
+                    f"Tentei {max_tentativas} vezes baixar a parcela {parcela_sheets} "
+                    f"com intervalo de {espera_segundos // 60} minutos entre tentativas, "
+                    f"mas o site continua instável. Último erro: {e}"
+                )
+                return None
+
+    return None
+
 # ==========================================
 # 5. INTEGRAÇÃO E FORMATAÇÃO (GOOGLE SHEETS)
 # ==========================================
@@ -493,7 +533,7 @@ def atualizar_planilha_local():
         df_sheets = pd.DataFrame(dados[1:], columns=dados[0])
 
         # Remove aspas simples de proteção de data inseridas anteriormente
-        df_sheets = df_sheets.applymap(
+        df_sheets = df_sheets.map(
             lambda x: x.lstrip("'") if isinstance(x, str) else x
         )
 
@@ -568,9 +608,37 @@ def upload_ecieges():
             page.goto(ECIEGES_URL, wait_until="networkidle")
             page.wait_for_timeout(3000)
 
-            # Passo 3: Clica no botão "Importar Arquivo"
-            log.info("Clicando em 'Importar Arquivo'...")
-            page.locator("button:has-text('Importar Arquivo'), a:has-text('Importar Arquivo')").first.click()
+            # Passo 3: Clica no botão "Importar arquivo"
+            # (página carrega via React e o botão fica fora da viewport — precisa scroll)
+            log.info("Aguardando o botão 'Importar arquivo' aparecer no DOM...")
+            botao_importar = page.locator("button:has-text('Importar arquivo')").first
+
+            try:
+                botao_importar.wait_for(state="attached", timeout=60000)
+            except Exception:
+                # Captura screenshot e HTML para diagnóstico
+                screenshot_path = os.path.join(BASE_DIR, 'logs', 'erro_ecieges.png')
+                html_path       = os.path.join(BASE_DIR, 'logs', 'erro_ecieges.html')
+                page.screenshot(path=screenshot_path, full_page=True)
+                with open(html_path, 'w', encoding='utf-8') as f:
+                    f.write(page.content())
+                log.error(f"Botão não encontrado. Screenshot salvo em: {screenshot_path}")
+                log.error(f"HTML da página salvo em: {html_path}")
+                raise
+
+            log.info("Rolando até o botão...")
+            botao_importar.scroll_into_view_if_needed()
+            page.wait_for_timeout(1500)
+
+            log.info("Clicando em 'Importar arquivo'...")
+            botao_importar.click()
+            page.wait_for_timeout(2000)
+
+            # Passo 3.1: Modal de confirmação "Importação de Planilha" (truncate)
+            log.info("Aguardando modal de confirmação 'Importação de Planilha'...")
+            page.locator("text=Importação de Planilha").wait_for(state="visible", timeout=15000)
+            log.info("Confirmando importação (clicando em 'Sim')...")
+            page.locator("button:has-text('Sim')").first.click()
             page.wait_for_timeout(2000)
 
             # Passo 4: Seleciona o arquivo XLSX
@@ -578,17 +646,27 @@ def upload_ecieges():
             input_file = page.locator("input[type='file']").first
             input_file.wait_for(state="attached", timeout=10000)
             input_file.set_input_files(PLANILHA_LOCAL)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
 
-            # Passo 5: Confirma o envio (botão de upload/enviar/confirmar no modal)
-            log.info("Confirmando envio do arquivo...")
-            page.locator(
-                "button:has-text('Importar'), button:has-text('Enviar'), "
-                "button:has-text('Confirmar'), button:has-text('Upload'), "
-                "button[type='submit']"
-            ).last.click()
+            # Passo 5: Modal "Selecione a aba da planilha" → escolher e-Gestor
+            log.info("Aguardando modal de seleção de aba...")
+            page.locator("text=Selecione a aba da planilha").wait_for(state="visible", timeout=15000)
+
+            log.info("Abrindo dropdown de abas...")
+            # MUI Select usa div[role='button'] com aria-haspopup='listbox'
+            page.locator("[aria-haspopup='listbox']").last.click()
+            page.wait_for_timeout(1500)
+
+            log.info("Selecionando aba 'e-Gestor'...")
+            page.locator("li:has-text('e-Gestor')").first.click()
+            page.wait_for_timeout(1500)
+
+            # Passo 6: Confirma com o botão "Importar essa aba"
+            log.info("Clicando em 'Importar essa aba'...")
+            page.locator("button:has-text('Importar essa aba')").first.click()
 
             # Aguarda processamento (upload de arquivo grande pode demorar)
+            log.info("Aguardando processamento do upload...")
             page.wait_for_load_state("networkidle", timeout=120000)
             page.wait_for_timeout(5000)
 
@@ -618,8 +696,9 @@ if __name__ == "__main__":
         if not parcela_site:
             log.info("Nenhuma ação necessária. Encerrando.")
         else:
-            # Passo 2: Baixa o relatório do portal e-Gestor (busca sem zero: 6/12)
-            arquivo_egestor = baixar_relatorio_egestor(parcela_site, parcela_sheets, caminho_completo)
+            # Passo 2: Baixa o relatório do portal e-Gestor com retry automático
+            # (até 3 tentativas com 5 minutos de intervalo em caso de timeout do site)
+            arquivo_egestor = baixar_com_retry(parcela_site, parcela_sheets, caminho_completo)
 
             if not arquivo_egestor:
                 log.error("Envio para o Google Sheets cancelado — download falhou.")
